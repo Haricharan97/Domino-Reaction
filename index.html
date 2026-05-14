@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Domino Chain Reaction</title>
+
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: Arial, Helvetica, sans-serif;
+      background: white;
+      color: #222;
+    }
+
+    canvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      z-index: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    #info {
+      position: fixed;
+      top: 15px;
+      left: 15px;
+      z-index: 2;
+      background: white;
+      border: 2px solid #222;
+      padding: 10px;
+      max-width: 330px;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 24px;
+    }
+
+    p {
+      margin: 4px 0;
+      font-size: 14px;
+    }
+
+    #controls {
+      position: fixed;
+      left: 15px;
+      right: 15px;
+      bottom: 15px;
+      z-index: 2;
+      background: white;
+      border: 2px solid #222;
+      padding: 10px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    button {
+      padding: 7px 10px;
+      border: 1px solid #222;
+      background: #eee;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #ddd;
+    }
+
+    input {
+      width: 130px;
+    }
+
+    #status {
+      font-weight: bold;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="info">
+    <p>Place dominoes on the floor, then push one and watch the chain reaction.</p>
+    <p id="status">Dominoes: 0 | Ready</p>
+  </div>
+
+  <div id="controls">
+    <button id="pushBtn">Push Opposite Side</button>
+    <button id="resetBtn">Reset</button>
+    <button id="clearBtn">Clear</button>
+    <button id="buildBtn">Build Off</button>
+    <button id="cameraBtn">Turn Camera</button>
+    <label>
+      Spacing
+      <input id="spacingSlider" type="range" min="0.28" max="0.9" value="0.42" step="0.02">
+    </label>
+  </div>
+
+  <script type="module">
+    import * as THREE from "https://unpkg.com/three@0.160.0/build/three.module.js";
+
+    let scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xffffff);
+
+    let camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+
+    let renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    let raycaster = new THREE.Raycaster();
+    let mouse = new THREE.Vector2();
+    let clock = new THREE.Clock();
+
+    let floor;
+    let dominoes = [];
+    let spacing = 0.42;
+    let currentAngle = 0;
+    let drawing = false;
+    let lastPoint = null;
+    let lastDomino = null;
+    let cameraAngle = 0.8;
+    let cameraDistance = 10;
+    let cameraMode = false;
+    let buildMode = false;
+    let oldMouseX = 0;
+
+    let dominoWidth = 0.32;
+    let dominoHeight = 1.2;
+    let dominoDepth = 0.12;
+
+    let statusText = document.getElementById("status");
+    let infoBox = document.getElementById("info");
+    let controlBox = document.getElementById("controls");
+    let pushBtn = document.getElementById("pushBtn");
+    let resetBtn = document.getElementById("resetBtn");
+    let clearBtn = document.getElementById("clearBtn");
+    let buildBtn = document.getElementById("buildBtn");
+    let cameraBtn = document.getElementById("cameraBtn");
+    let spacingSlider = document.getElementById("spacingSlider");
+
+    let wood = new THREE.MeshStandardMaterial({ color: 0xb87533, roughness: 0.55 });
+    let ghostMat = new THREE.MeshStandardMaterial({ color: 0x5588ff, transparent: true, opacity: 0.45 });
+
+    let ghost = new THREE.Mesh(new THREE.BoxGeometry(dominoWidth, dominoHeight, dominoDepth), ghostMat);
+    ghost.visible = false;
+    scene.add(ghost);
+
+    makeRoom();
+    makeLights();
+    makeStarterDominoes();
+    moveCamera();
+    addEvents();
+    animate();
+
+    function makeRoom() {
+      let floorMat = new THREE.MeshStandardMaterial({ color: 0xf3f3f3, roughness: 0.45 });
+      floor = new THREE.Mesh(new THREE.PlaneGeometry(24, 24), floorMat);
+      floor.rotation.x = -Math.PI / 2;
+      floor.receiveShadow = true;
+      scene.add(floor);
+
+      let wallMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5 });
+
+      let back = new THREE.Mesh(new THREE.PlaneGeometry(24, 7), wallMat);
+      back.position.set(0, 3.5, -12);
+      scene.add(back);
+
+      let left = new THREE.Mesh(new THREE.PlaneGeometry(24, 7), wallMat);
+      left.position.set(-12, 3.5, 0);
+      left.rotation.y = Math.PI / 2;
+      scene.add(left);
+
+      let right = new THREE.Mesh(new THREE.PlaneGeometry(24, 7), wallMat);
+      right.position.set(12, 3.5, 0);
+      right.rotation.y = -Math.PI / 2;
+      scene.add(right);
+
+      let ceiling = new THREE.Mesh(new THREE.PlaneGeometry(24, 24), wallMat);
+      ceiling.position.y = 7;
+      ceiling.rotation.x = Math.PI / 2;
+      scene.add(ceiling);
+
+      let blueMat = new THREE.MeshBasicMaterial({ color: 0x6ab7ff });
+      let shape1 = new THREE.Mesh(new THREE.BoxGeometry(0.08, 2.8, 0.08), blueMat);
+      shape1.position.set(-3, 3, -11.9);
+      scene.add(shape1);
+
+      let shape2 = new THREE.Mesh(new THREE.BoxGeometry(0.08, 2.8, 0.08), blueMat);
+      shape2.position.set(3, 3, -11.9);
+      scene.add(shape2);
+    }
+
+    function makeLights() {
+      let ambient = new THREE.AmbientLight(0xffffff, 0.75);
+      scene.add(ambient);
+
+      let sun = new THREE.DirectionalLight(0xffffff, 1.8);
+      sun.position.set(5, 8, 6);
+      sun.castShadow = true;
+      sun.shadow.camera.left = -12;
+      sun.shadow.camera.right = 12;
+      sun.shadow.camera.top = 12;
+      sun.shadow.camera.bottom = -12;
+      scene.add(sun);
+    }
+
+    function makeStarterDominoes() {
+      for (let i = 0; i < 30; i++) {
+        let x = Math.sin(i * 0.25) * 1.1;
+        let z = -5 + i * 0.34;
+
+        let nextX = Math.sin((i + 1) * 0.25) * 1.1;
+        let nextZ = -5 + (i + 1) * 0.34;
+
+        let angle = Math.atan2(nextX - x, nextZ - z);
+        currentAngle = angle;
+        addDomino(new THREE.Vector3(x, 0, z), angle);
+      }
+
+      updateStatus();
+    }
+
+    function addDomino(point, angle) {
+      let group = new THREE.Group();
+      group.position.set(point.x, 0, point.z);
+      group.rotation.y = angle;
+
+      let tiltGroup = new THREE.Group();
+      group.add(tiltGroup);
+
+      let block = new THREE.Mesh(new THREE.BoxGeometry(dominoWidth, dominoHeight, dominoDepth), wood);
+      block.position.y = dominoHeight / 2;
+      block.castShadow = true;
+      block.receiveShadow = true;
+      block.userData.index = dominoes.length;
+
+      tiltGroup.add(block);
+      scene.add(group);
+
+      let d = {
+        group: group,
+        tiltGroup: tiltGroup,
+        block: block,
+        x: point.x,
+        z: point.z,
+        angle: angle,
+        startAngle: angle,
+        tilt: 0,
+        speed: 0,
+        wait: -1,
+        direction: 1,
+        falling: false,
+        fallen: false,
+        hitNext: false
+      };
+
+      dominoes.push(d);
+      updateStatus();
+      return d;
+    }
+
+    function addEvents() {
+      window.addEventListener("resize", resize);
+      renderer.domElement.addEventListener("pointerdown", pointerDown);
+      window.addEventListener("pointermove", pointerMove);
+      window.addEventListener("pointerup", pointerUp);
+      window.addEventListener("wheel", zoomCamera);
+
+      infoBox.addEventListener("pointerdown", stopUiEvent);
+      controlBox.addEventListener("pointerdown", stopUiEvent);
+      controlBox.addEventListener("pointermove", stopUiEvent);
+
+      pushBtn.addEventListener("click", function () {
+        if (dominoes.length > 0) {
+          pushDomino(dominoes.length - 1, -1);
+        }
+      });
+
+      resetBtn.addEventListener("click", resetDominoes);
+      clearBtn.addEventListener("click", clearDominoes);
+
+      buildBtn.addEventListener("click", function () {
+        buildMode = !buildMode;
+        buildBtn.textContent = buildMode ? "Build On" : "Build Off";
+      });
+
+      cameraBtn.addEventListener("click", function () {
+        cameraMode = !cameraMode;
+        cameraBtn.textContent = cameraMode ? "Place Dominoes" : "Turn Camera";
+      });
+
+      spacingSlider.addEventListener("input", function () {
+        spacing = Number(spacingSlider.value);
+      });
+    }
+
+    function pointerDown(event) {
+      if (isOnUi(event)) {
+        return;
+      }
+
+      if (event.target !== renderer.domElement) {
+        return;
+      }
+
+      if (cameraMode) {
+        oldMouseX = event.clientX;
+        return;
+      }
+
+      let clicked = getClickedDomino(event);
+      if (clicked !== -1) {
+        pushDomino(clicked, 1);
+        return;
+      }
+
+      if (!buildMode) {
+        return;
+      }
+
+      let point = getFloorPoint(event);
+      if (!point) return;
+
+      drawing = true;
+      lastPoint = point.clone();
+      lastDomino = addDomino(point, currentAngle);
+    }
+
+    function pointerMove(event) {
+      if (isOnUi(event)) {
+        ghost.visible = false;
+        return;
+      }
+
+      if (cameraMode && event.buttons === 1) {
+        let move = event.clientX - oldMouseX;
+        oldMouseX = event.clientX;
+        cameraAngle -= move * 0.01;
+        moveCamera();
+        return;
+      }
+
+      let point = getFloorPoint(event);
+
+      if (!drawing) {
+        showGhost(point);
+        return;
+      }
+
+      if (!point) return;
+
+      let move = point.clone().sub(lastPoint);
+      while (move.length() >= spacing) {
+        let dir = move.clone().normalize();
+        let nextPoint = lastPoint.clone().add(dir.multiplyScalar(spacing));
+        let angle = Math.atan2(dir.x, dir.z);
+
+        if (lastDomino) {
+          lastDomino.angle = angle;
+          lastDomino.startAngle = angle;
+          lastDomino.group.rotation.y = angle;
+        }
+
+        currentAngle = angle;
+        lastDomino = addDomino(nextPoint, angle);
+        lastPoint.copy(nextPoint);
+        move = point.clone().sub(lastPoint);
+      }
+
+      showGhost(point);
+    }
+
+    function pointerUp() {
+      drawing = false;
+    }
+
+    function stopUiEvent(event) {
+      event.stopPropagation();
+    }
+
+    function isOnUi(event) {
+      let info = infoBox.getBoundingClientRect();
+      let controls = controlBox.getBoundingClientRect();
+
+      let onInfo = event.clientX >= info.left && event.clientX <= info.right &&
+        event.clientY >= info.top && event.clientY <= info.bottom;
+
+      let onControls = event.clientX >= controls.left && event.clientX <= controls.right &&
+        event.clientY >= controls.top && event.clientY <= controls.bottom;
+
+      return onInfo || onControls;
+    }
+
+    function pushDomino(index, direction) {
+      let delay = 0;
+
+      for (let i = index; i >= 0 && i < dominoes.length; i += direction) {
+        let d = dominoes[i];
+        if (!d.fallen) {
+          d.direction = direction;
+          d.wait = delay;
+          d.hitNext = true;
+          delay += 0.11;
+        }
+      }
+
+      updateStatus();
+    }
+
+    function updateDominoes(delta) {
+      for (let i = 0; i < dominoes.length; i++) {
+        let d = dominoes[i];
+
+        if (d.wait >= 0) {
+          d.wait -= delta;
+
+          if (d.wait <= 0) {
+            d.wait = -1;
+            d.falling = true;
+            d.speed = 4.8;
+          }
+        }
+
+        if (d.falling) {
+          d.speed += 4 * delta;
+          d.tilt += d.speed * delta;
+
+          if (d.tilt > 1.45) {
+            d.tilt = 1.45;
+            d.falling = false;
+            d.fallen = true;
+          }
+        }
+
+        d.tiltGroup.rotation.x = d.tilt * d.direction;
+      }
+
+      updateStatus();
+    }
+
+    function resetDominoes() {
+      for (let i = 0; i < dominoes.length; i++) {
+        let d = dominoes[i];
+        d.group.position.set(d.x, 0, d.z);
+        d.group.rotation.set(0, d.startAngle, 0);
+        d.tiltGroup.rotation.set(0, 0, 0);
+        d.angle = d.startAngle;
+        d.tilt = 0;
+        d.speed = 0;
+        d.wait = -1;
+        d.direction = 1;
+        d.falling = false;
+        d.fallen = false;
+        d.hitNext = false;
+      }
+
+      updateStatus();
+    }
+
+    function clearDominoes() {
+      for (let i = 0; i < dominoes.length; i++) {
+        scene.remove(dominoes[i].group);
+      }
+
+      dominoes = [];
+      updateStatus();
+    }
+
+    function getClickedDomino(event) {
+      setMouse(event);
+      raycaster.setFromCamera(mouse, camera);
+
+      let blocks = [];
+      for (let i = 0; i < dominoes.length; i++) {
+        blocks.push(dominoes[i].block);
+      }
+
+      let hits = raycaster.intersectObjects(blocks);
+      if (hits.length === 0) return -1;
+      return hits[0].object.userData.index;
+    }
+
+    function getFloorPoint(event) {
+      setMouse(event);
+      raycaster.setFromCamera(mouse, camera);
+      let hits = raycaster.intersectObject(floor);
+      if (hits.length === 0) return null;
+      return hits[0].point;
+    }
+
+    function setMouse(event) {
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+    }
+
+    function showGhost(point) {
+      if (!point || cameraMode || !buildMode) {
+        ghost.visible = false;
+        return;
+      }
+
+      ghost.visible = true;
+      ghost.position.set(point.x, dominoHeight / 2, point.z);
+      ghost.rotation.y = currentAngle;
+    }
+
+    function updateStatus() {
+      let falling = 0;
+      let fallen = 0;
+
+      for (let i = 0; i < dominoes.length; i++) {
+        if (dominoes[i].falling) falling++;
+        if (dominoes[i].fallen) fallen++;
+      }
+
+      let text = "Ready";
+      if (falling > 0) text = falling + " falling";
+      if (falling === 0 && fallen > 0) text = fallen + " fallen";
+
+      statusText.textContent = "Dominoes: " + dominoes.length + " | " + text;
+    }
+
+    function moveCamera() {
+      camera.position.x = Math.sin(cameraAngle) * cameraDistance;
+      camera.position.z = Math.cos(cameraAngle) * cameraDistance;
+      camera.position.y = 5;
+      camera.lookAt(0, 0.6, 0);
+    }
+
+    function zoomCamera(event) {
+      cameraDistance += event.deltaY * 0.01;
+      if (cameraDistance < 5) cameraDistance = 5;
+      if (cameraDistance > 16) cameraDistance = 16;
+      moveCamera();
+    }
+
+    function resize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      let delta = Math.min(clock.getDelta(), 0.04);
+      updateDominoes(delta);
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
+</html>
