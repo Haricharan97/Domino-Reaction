@@ -7,7 +7,6 @@ Creates a satisfying domino setups, trigger realistic chain reactions, and explo
 <br>Camera controls
 <br>Realistic chain reactions
 <br>Reset and clear options
-<br>WebGL rendering with Three.js
 <br><img width="1938" height="1528" alt="image" src="https://github.com/user-attachments/assets/191196bd-f919-4c22-afeb-383985255e69" />
 
 
